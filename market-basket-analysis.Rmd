@@ -1,0 +1,108 @@
+---
+title: 'Market Basket Analysis'
+author: "David"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output:
+  html_document:
+    df_print: paged 
+    highlight: tango
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: no
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+
+# Market Basket Analysis on Cross Selling
+
+## Background
+
+Ketika sedang berbelanja di suatu retail konsumen yang membeli suatu produk seringkali ditawarkan produk lainnya untuk dibeli juga oleh penjual, kegiatan tersebut disebut cross selling. Ada banyak keuntungan ketika melakukan cross selling seperti meningkatkan penjualan, meningkatkan tingkat kepuasan konsumen, serta bisa mengenalkan produk baru kepada konsumen. Ada berbagai macam cara untuk mengetahui barang apa yang ditawarkan kepada consumen salah satunya adalah market basket analysis. 
+
+Market Basket Analysis atau sering juga disebut dengan Association Rules merupakan kegiatan mencari aturan (rules) asosiasi yang menunjukkan hubungan antar item dalam sebuah transaksi. Sebagai contoh seorang konsumen membeli roti tawar, ketika konsumen membeli roti ada kecendrungan membeli selai juga, atau ketika membei membeli sikat gigi ada kecendrungan membeli pasta giginya. Pola-pola data transaksi ini sangat bermanfaat dalam industri retail seperti penetapan diskon produk, promo, penjualan dalam bentuk paket, rekomendasi produk, serta penentuan lokasi item produk.
+
+## Analysis
+
+```{r}
+library(dplyr) # data wrangling
+library(arules) # Association Rules
+library(arulesViz) # visualisasi
+```
+
+Data yang digunakan merupakan data transaksi retail yang diambil dari UCI Machine Learning. Dari Data set ini kita akan mencari tau barang apa yang akan direkomendasikan kepada customer berdasarkan produk yang dia beli. 
+
+```{r}
+retail <- read.csv("data/OnlineRetail.csv")
+str(retail)
+```
+
+Dari output di atas, bisa diketahui bahwa terdapat 541 ribu observasi dengan 8 kolom/variabel. Berikut penjelasan untuk setiap kolom :
+
+* **InvocieNo** : Nomer invoice/faktur pembelian      
+* **StockCode** : Kode stok barang       
+* **Description** : Nama barang       
+* **Quantity** : Jumlah pembelian      
+* **InvoiceDate** : Tanggal invoice diterbitkan       
+* **UnitPrice** : Harga satuan barang      
+* **CustomerID** : ID pelanggan       
+* **Country** : Negara asal pelanggan    
+
+Bila di cek pada data,terdapat nilai negatif pada barang yang terjual (Quantity), hal ini menujukkan bahwa barang tersebut dibeli dalam kondisi promo. Kita tidak ingin menggunakan data tersebut karena kita tidak ingin melihat pengaruh diskon pada rules yang terbentuk nanti.
+```{r}
+summary(retail$Quantity)
+```
+
+Proses selanjutnya kita bisa mengambil data yang memiliki nilai `Quantity` diatas 0 dan mengambil kolom `InvoiceNo`, `Description` saja. 
+```{r}
+retail_clean <- retail %>% 
+  filter(Quantity > 0) %>% 
+  select(InvoiceNo, Description)
+
+head(retail_clean)
+```
+
+Sebelum membuat *association rules* data perlu dilakukan transformasi dari yang semula data frame menjadi data transaksi. Format data transaksi akan menggabungkan beberapa barang pada ID transaksi yang sama. 
+```{r}
+retail_transaction <- split(retail_clean$Description, retail_clean$InvoiceNo) %>% 
+  as("transactions")
+
+retail_transaction %>% 
+  head(3) %>% 
+  inspect()
+```
+
+
+Untuk membuat *association rules*  kita perlu mendefinisikan batasan nilai support dan nilai confidence. support 1% (0.01) artinya item atau kombinasi item harus ada minimal 1% transaksi dari total keseluruhan transaksi. sedangkan confidence 70% berarti seberapa besarnya kemungkinan seseorang akan membeli item B jika terdapat item A. Range nilai support dan confidence adalah dari 1 hingga 0, semakin tinggi nilai tersebut maka probabilitas rules yang didapatkan semakin tinggi, namun jumlah rules yang didapatkan semakin sedikit. Nilai ini bisa diatur sesuai kebutuhan.
+
+```{r message=F}
+retail_rules <- apriori(data = retail_transaction, parameter = list(supp = 0.01, conf = 0.7))
+```
+
+Fungsi apriori di atas menghasilkan 218 rules,dibawah ini merupakan 5 rules teratas berdasarkan nilai confidence tertinggi
+
+```{r}
+rules_conf <- head(retail_rules, 5, by = "confidence")
+inspect(rules_conf)
+```
+
+Nilai *Confidence* yang tinggi menunjukkan seberapa besar peluang membeli item lainnya jika kita telah membeli suatu item. Rules dengan *Confidence* tertinggi adalah **{jam making set printed, suki shoulder bag} => {dotcom postage}**, artinya ketika seorang pelanggan membeli 2 item tersebut, kemungkinan besar pelanggan juga akan membeli **dotcom postage** karena dari seluruh transaksi yang berisi 2 item pertama yang dibeli, 0.958 atau 95.8% pembelian juga terdapat item **dotcom postage**. 
+
+Dari rules yang dihasilkan dapat dilihat juga hubungan antar rules dengan menggunakan `graph` atau network, dengan tiap lingkaran atau titik adalah rules dan panah sebagai hubungan antara rules dengan item barangnya.
+
+
+```{r  message=F, warning=F, fig.width=12}
+plot(retail_rules, 
+     method = "graph", 
+     measure = "lift",  
+     engine = "htmlwidget" # membuat grafik interaktif
+     )
+```
+
+Pada grafik yang dihasilkan di atas, terdapat beberapa cluster atau kelompok rules yang saling berinteraksi satu sama lain. Salah satu yang terbesar adalah cluster yang berisi  charlotte bag yang saling terhubung. Cluster lainnya yang berisi banyak rules yang saling terkoneksi adalah clusterherb marker.
+
+Kita ambil contoh cluster charlotte bag, yang hanya terdiri dari 5 item/produk, yakni woodland charlotte bag, strawberry charlotte bag, red retrospot charlotte bag, charlotte bag pink polkadot, charlotte bag suki design. Berdasarkan interaksi 5 item tersebut, dihasilkan puluhan rules/aturan yang berbeda. Apabila diperhatikan ke 5 item tersebut saling terhubung, maka hal ini menunjukkan adanya hubungan keterkaitan antara rules satu dengan lainnya. Oleh karena kita meyakini adanya hubungan keterkaitan yang kuat antara item satu dengan lainnya di dalam cluster tersebut, maka kita bisa membuat sebuah promo dalam bentuk *Bundle Package*; yakni paket lengkap yang berisi 5 item tersebut.
